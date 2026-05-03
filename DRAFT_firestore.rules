@@ -1,0 +1,90 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Helpers ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'plan', 'createdAt']) &&
+             data.keys().size() == 4 &&
+             data.uid == request.auth.uid &&
+             data.email is string && data.email.size() <= 256 &&
+             data.plan in ['free', 'pro', 'expert'] &&
+             data.createdAt == request.time;
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['userId', 'name', 'createdAt']) &&
+             data.keys().size() >= 3 &&
+             data.userId == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.createdAt == request.time;
+    }
+
+    function isValidCalculation(data) {
+      return data.keys().hasAll(['projectId', 'module', 'name', 'result', 'unit', 'date']) &&
+             data.keys().size() == 6 &&
+             data.projectId is string && data.projectId.size() <= 128 &&
+             data.module is string && data.module.size() <= 50 &&
+             data.name is string && data.name.size() <= 200 &&
+             data.result is string && data.result.size() <= 500 &&
+             data.unit is string && data.unit.size() <= 20 &&
+             data.date == request.time;
+    }
+
+    // --- Collections ---
+
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId) && 
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'plan']) &&
+        (incoming().plan == existing().plan || isAdmin()); // Plan changes usually via server/admin
+    }
+
+    match /projects/{projectId} {
+      allow get: if isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidProject(incoming());
+      allow update: if isSignedIn() && 
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description']);
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    match /projects/{projectId}/calculations/{calcId} {
+      allow read: if isSignedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.userId == request.auth.uid;
+      allow create: if isSignedIn() && 
+        get(/databases/$(database)/documents/projects/$(projectId)).data.userId == request.auth.uid &&
+        isValidCalculation(incoming()) &&
+        incoming().projectId == projectId;
+      allow delete: if isSignedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.userId == request.auth.uid;
+    }
+  }
+}

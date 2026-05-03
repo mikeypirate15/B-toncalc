@@ -1,0 +1,57 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account information and subscription status",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "plan": { "type": "string", "enum": ["free", "pro", "expert"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "plan"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "A construction project/site owned by a user",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name"]
+    },
+    "Calculation": {
+      "title": "Calculation",
+      "description": "Saved calculation result",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "module": { "type": "string" },
+        "name": { "type": "string" },
+        "result": { "type": "string" },
+        "unit": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "module", "name", "result"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "User projects"
+    },
+    "/projects/{projectId}/calculations/{calcId}": {
+      "schema": "Calculation",
+      "description": "Calculations within a project"
+    }
+  }
+}

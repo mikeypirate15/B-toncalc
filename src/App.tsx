@@ -20,8 +20,84 @@ import {
   Truck,
   History,
   FileText,
-  Activity
+  Activity,
+  LogOut,
+  User as UserIcon,
+  CreditCard,
+  Mail,
+  Key,
+  Smartphone
 } from "lucide-react";
+
+// ── Firebase Initialization ──────────────────────────────────────────────────
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  onAuthStateChanged, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut, 
+  sendPasswordResetEmail,
+  GoogleAuthProvider,
+  signInWithPopup,
+  User as FirebaseUser
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  onSnapshot, 
+  addDoc, 
+  deleteDoc,
+  orderBy,
+  serverTimestamp,
+  Timestamp
+} from 'firebase/firestore';
+import firebaseConfig from '../firebase-applet-config.json';
+
+const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const auth = getAuth(app);
+
+// ── Types ──────────────────────────────────────────────────────────────────
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -53,12 +129,357 @@ const ALL_TABS = [
   { id: "historique", label: "Rapports",   icon: History,        plan: "expert" },
 ] as const;
 
+
 const DOSAGE_TYPES = {
   b25:    { label: "B25 – Courant",      ciment: 350, sable: 700, gravier: 1050 },
   b30:    { label: "B30 – Résistant",    ciment: 400, sable: 650, gravier: 1000 },
   b35:    { label: "B35 – Haute dureté", ciment: 450, sable: 600, gravier: 950  },
   maigre: { label: "Béton maigre",       ciment: 250, sable: 800, gravier: 1100 },
 };
+
+// ── Auth & Global State ─────────────────────────────────────────────────────
+
+function AuthView({ onAuth }: { onAuth: () => void }) {
+  const [isLogin, setIsLogin] = useState(true);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      if (isLogin) {
+        await signInWithEmailAndPassword(auth, email, password);
+      } else {
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        // Initialize user doc
+        await setDoc(doc(db, "users", cred.user.uid), {
+          uid: cred.user.uid,
+          email: cred.user.email,
+          plan: "free",
+          createdAt: serverTimestamp()
+        });
+      }
+      onAuth();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogle = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      const res = await signInWithPopup(auth, provider);
+      const userDoc = await getDoc(doc(db, "users", res.user.uid));
+      if (!userDoc.exists()) {
+        await setDoc(doc(db, "users", res.user.uid), {
+          uid: res.user.uid,
+          email: res.user.email,
+          plan: "free",
+          createdAt: serverTimestamp()
+        });
+      }
+      onAuth();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleForgot = async () => {
+    if (!email) {
+      setError("Veuillez saisir votre email.");
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      alert("Lien de réinitialisation envoyé par email.");
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl p-8 md:p-12 relative overflow-hidden ring-1 ring-slate-200"
+      >
+        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-orange-400 to-orange-600" />
+        
+        <div className="text-center mb-10">
+          <div className="inline-flex p-3 bg-orange-100 rounded-2xl text-orange-600 mb-4">
+            <Box size={32} />
+          </div>
+          <h1 className="text-3xl font-black text-slate-900 font-display">BetonCalc <span className="text-orange-500">Pro</span></h1>
+          <p className="text-slate-400 text-sm font-medium mt-2">
+            {isLogin ? "Bon retour sur le chantier !" : "Rejoignez l'élite du BTP."}
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Email</label>
+            <div className="relative">
+              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input 
+                type="email" 
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 pl-12 pr-4 py-3 rounded-2xl focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium"
+                placeholder="votre@email.com"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Mot de passe</label>
+            <div className="relative">
+              <Key className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input 
+                type="password" 
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 pl-12 pr-4 py-3 rounded-2xl focus:ring-2 focus:ring-orange-500 outline-none transition-all font-medium"
+                placeholder="••••••••"
+              />
+            </div>
+          </div>
+
+          {error && <p className="text-xs text-red-500 font-bold bg-red-50 p-3 rounded-xl border border-red-100">{error}</p>}
+
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl shadow-lg hover:bg-slate-800 transition-all flex items-center justify-center gap-2 group active:scale-[0.98]"
+          >
+            {loading ? "Chargement..." : isLogin ? "Se Connecter" : "Créer mon compte"}
+            <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
+          </button>
+        </form>
+
+        <div className="mt-8 space-y-4">
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
+            <div className="relative flex justify-center text-[10px] uppercase tracking-widest font-bold text-slate-400"><span className="bg-white px-4">Ou continuer avec</span></div>
+          </div>
+
+          <button 
+            onClick={handleGoogle}
+            className="w-full bg-white border border-slate-200 text-slate-700 font-bold py-3 rounded-2xl hover:bg-slate-50 transition-all flex items-center justify-center gap-3 shadow-sm"
+          >
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5" alt="Google" />
+            Google
+          </button>
+        </div>
+
+        <div className="mt-8 text-center space-y-2">
+          <button 
+            onClick={() => setIsLogin(!isLogin)}
+            className="text-sm font-bold text-orange-600 hover:text-orange-700 transition-colors"
+          >
+            {isLogin ? "Pas encore de compte ? S'inscrire" : "Déjà inscrit ? Se connecter"}
+          </button>
+          <br/>
+          {isLogin && (
+            <button 
+              onClick={handleForgot}
+              className="text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-slate-600 transition-colors"
+            >
+              Mot de passe oublié ?
+            </button>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function PaymentView({ currentPlan, onUpgrade }: { currentPlan: string, onUpgrade: (plan: "pro" | "expert") => void }) {
+  const [selectedPlan, setSelectedPlan] = useState<"pro" | "expert" | null>(null);
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [isPaying, setIsPaying] = useState(false);
+  const [step, setStep] = useState<"tiers" | "airtel">("tiers");
+
+  const tiers = [
+    { id: "pro", name: "Pro", price: "2 000", period: "mois", features: ["Modules Maçonnerie & Escaliers", "Calcul de Poutre BA", "Historique & Rapports", "Support Prioritaire"], color: "orange", isBest: false },
+    { id: "expert", name: "Expert", price: "3 000", period: "mois", features: ["Tout le Pro", "Génie Civil (Dalots, Murs)", "Planning & Jalons Chantier", "Gestion des Stocks Matériaux", "Maturométrie du Béton"], color: "purple", isBest: false },
+    { id: "expert_annual", name: "Expert+", price: "12 000", period: "an", features: ["Avantages Expert Complet", "Économie de 66%", "Accès illimité 12 mois", "Badge Expert Certifié", "Assistance Directe WhatsApp"], color: "emerald", isBest: true }
+  ];
+
+  const handlePayInitiate = (plan: "pro" | "expert") => {
+    setSelectedPlan(plan);
+    setStep("airtel");
+  };
+
+  const handleAirtelSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (phoneNumber.length < 7) {
+      alert("Veuillez saisir un numéro Airtel valide.");
+      return;
+    }
+    setIsPaying(true);
+    // Simulation du délai réseau Airtel Money
+    setTimeout(() => {
+      onUpgrade(selectedPlan!);
+      setIsPaying(false);
+      setStep("tiers");
+    }, 2500);
+  };
+
+  if (step === "airtel") {
+    return (
+      <div className="max-w-md mx-auto">
+        <button onClick={() => setStep("tiers")} className="flex items-center gap-2 text-slate-400 font-bold text-xs uppercase mb-6 hover:text-slate-600">
+          <ArrowLeftRight size={14} /> Retour aux offres
+        </button>
+        
+        <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border-2 border-red-500 overflow-hidden relative">
+          <div className="absolute top-0 right-0 p-4 opacity-10">
+            <Smartphone size={80} />
+          </div>
+          
+          <div className="flex items-center gap-4 mb-8">
+            <div className="w-12 h-12 bg-red-600 rounded-2xl flex items-center justify-center shadow-lg shadow-red-600/20">
+              <span className="text-white font-black italic text-xl">a!</span>
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-slate-800">Airtel Money</h3>
+              <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Paiement Sécurisé</p>
+            </div>
+          </div>
+
+          <div className="mb-8 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+            <div className="flex justify-between items-center text-sm font-bold">
+              <span className="text-slate-500">Forfait {selectedPlan?.toUpperCase()}</span>
+              <span className="text-red-600">{tiers.find(t => t.id === selectedPlan)?.price} XAF</span>
+            </div>
+          </div>
+
+          <form onSubmit={handleAirtelSubmit} className="space-y-6">
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Numéro de téléphone</label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">+241</span>
+                <input 
+                  type="tel" 
+                  autoFocus
+                  placeholder="07x xx xx xx"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  className="w-full bg-slate-50 border-2 border-slate-100 pl-16 pr-4 py-4 rounded-2xl focus:border-red-500 outline-none transition-all font-black text-slate-800"
+                />
+              </div>
+            </div>
+
+            <button 
+              type="submit"
+              disabled={isPaying}
+              className="w-full bg-red-600 text-white font-black py-5 rounded-2xl shadow-xl hover:bg-red-700 transition-all flex items-center justify-center gap-3 active:scale-95 disabled:grayscale"
+            >
+              {isPaying ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Validation en cours...
+                </>
+              ) : (
+                <>
+                  Payer via Airtel Money
+                  <ChevronRight size={20} />
+                </>
+              )}
+            </button>
+          </form>
+
+          <p className="mt-8 text-[10px] text-slate-400 text-center leading-relaxed">
+            Une fenêtre de confirmation apparaîtra sur votre téléphone. <br/>
+            Saisissez votre code PIN pour valider la transaction.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8 py-4">
+      <div className="text-center">
+        <h2 className="text-3xl font-black text-slate-900 font-display">Choisissez votre puissance</h2>
+        <p className="text-slate-400 text-sm font-medium mt-2">Débloquez les outils essentiels pour vos chantiers en Afrique Centrale.</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {tiers.map(tile => (
+          <div key={tile.id} className={`bg-white border-2 p-8 rounded-[2.5rem] transition-all hover:shadow-xl relative flex flex-col h-full ${tile.isBest ? "border-emerald-500 shadow-emerald-500/10" : tile.id === "expert" ? "border-purple-500/20" : "border-orange-500/20"}`}>
+            {currentPlan === tile.id && (
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-500 text-white text-[10px] font-black uppercase tracking-widest px-4 py-1 rounded-full shadow-lg">
+                Actuel
+              </div>
+            )}
+            {tile.isBest && (
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-500 text-white text-[10px] font-black uppercase tracking-widest px-4 py-1 rounded-full shadow-lg">
+                Meilleure Offre
+              </div>
+            )}
+            
+            <div className="mb-6">
+              <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${tile.color === "emerald" ? "text-emerald-500" : tile.color === "purple" ? "text-purple-500" : "text-orange-500"}`}>
+                FORFAIT {tile.name}
+              </span>
+              <div className="flex items-baseline gap-1 mt-2">
+                <span className="text-4xl font-black text-slate-900">{tile.price}</span>
+                <span className="text-slate-400 text-xs font-bold">XAF / {tile.period}</span>
+              </div>
+            </div>
+
+            <ul className="space-y-4 mb-10 flex-1">
+              {tile.features.map((f, i) => (
+                <li key={i} className="flex items-center gap-3 text-sm font-medium text-slate-600">
+                  <div className={`w-1.5 h-1.5 rounded-full ${tile.color === "emerald" ? "bg-emerald-500" : tile.color === "purple" ? "bg-purple-500" : "bg-orange-500"}`} />
+                  {f}
+                </li>
+              ))}
+            </ul>
+
+            <button 
+              disabled={currentPlan === tile.id || (currentPlan === "expert" && tile.id === "pro")}
+              onClick={() => handlePayInitiate(tile.id.replace("_annual", "") as "pro" | "expert")}
+              className={`w-full py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95 ${
+                tile.color === "emerald"
+                ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                : tile.id === "expert" 
+                ? "bg-slate-900 text-white hover:bg-slate-800" 
+                : "bg-orange-600 text-white hover:bg-orange-700"
+              } disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed`}
+            >
+              <CreditCard size={18} />
+              Prendre {tile.name}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-slate-900 text-white p-8 rounded-[2.5rem] overflow-hidden relative">
+        <div className="relative z-10 flex flex-col md:flex-row items-center gap-6 text-center md:text-left">
+          <div className="p-4 bg-white/10 rounded-3xl">
+            <Smartphone size={32} />
+          </div>
+          <div className="flex-1">
+            <h4 className="font-bold text-xl">L'application Mobile arrive bientôt</h4>
+            <p className="text-slate-400 text-sm mt-1">Gérez vos chantiers au Gabon et ailleurs directement depuis le terrain.</p>
+          </div>
+        </div>
+        <div className="absolute -right-20 -bottom-20 w-64 h-64 bg-red-600/20 blur-[100px] rounded-full" />
+      </div>
+    </div>
+  );
+}
 
 // ── Shared UI Components ──────────────────────────────────────────────────────
 
@@ -1094,53 +1515,127 @@ function HistoriqueTab({ history, clearHistory }: { history: any[], clearHistory
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 
+const ADMIN_EMAIL = "mikeypirate15@gmail.com";
+
 export default function App() {
-  const [plan, setPlan] = useState<keyof typeof PLANS>("free");
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("volume");
   const [projectName, setProjectName] = useState("");
+  const [projects, setProjects] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
 
-  // Load history from localStorage on mount
+  const isAdmin = currentUser?.email === ADMIN_EMAIL;
+  const plan: keyof typeof PLANS = isAdmin ? "expert" : ((userProfile?.plan as any) || "free");
+
+  // Auth Listener
   useEffect(() => {
-    const saved = localStorage.getItem("betoncalc_history");
-    const savedName = localStorage.getItem("betoncalc_project");
-    if (saved) {
-      try {
-        setHistory(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to load history", e);
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      if (user) {
+        // Fetch/Sync profile
+        const userDocRef = doc(db, "users", user.uid);
+        onSnapshot(userDocRef, (snap) => {
+          if (snap.exists()) {
+            setUserProfile(snap.data());
+          }
+        });
+
+        // Fetch Projects
+        const q = query(collection(db, "projects"), where("userId", "==", user.uid));
+        onSnapshot(q, (snap) => {
+          setProjects(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        });
+      } else {
+        setUserProfile(null);
+        setProjects([]);
+        setHistory([]);
       }
-    }
-    if (savedName) setProjectName(savedName);
+      setLoading(false);
+    });
+    return unsub;
   }, []);
 
-  // Save history to localStorage
+  // Fetch History for current project
   useEffect(() => {
-    localStorage.setItem("betoncalc_history", JSON.stringify(history));
-  }, [history]);
+    if (!currentUser || !projectName) return;
+    const project = projects.find(p => p.name === projectName);
+    if (!project) return;
 
-  useEffect(() => {
-    localStorage.setItem("betoncalc_project", projectName);
-  }, [projectName]);
+    const q = query(
+      collection(db, "projects", project.id, "calculations"),
+      orderBy("date", "desc")
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return unsub;
+  }, [currentUser, projectName, projects]);
 
-  const addToHistory = (item: { module: string, name: string, result: string, unit: string }) => {
-    const newItem = { ...item, name: projectName || item.name, date: new Date().toISOString() };
-    setHistory(prev => [...prev, newItem].slice(-20)); // Keep last 20
+  const addToHistory = async (item: { module: string, name: string, result: string, unit: string }) => {
+    if (!currentUser) return;
+    
+    let project = projects.find(p => p.name === (projectName || "Projet Défaut"));
+    let projectId = project?.id;
+
+    if (!project) {
+      // Create project if missing
+      const newProj = await addDoc(collection(db, "projects"), {
+        userId: currentUser.uid,
+        name: projectName || "Projet Défaut",
+        createdAt: serverTimestamp()
+      });
+      projectId = newProj.id;
+    }
+
+    if (projectId) {
+      await addDoc(collection(db, "projects", projectId, "calculations"), {
+        ...item,
+        name: projectName || item.name,
+        date: serverTimestamp()
+      });
+    }
   };
 
-  const clearHistory = () => {
-    setHistory([]);
-    localStorage.removeItem("betoncalc_history");
+  const clearHistory = async () => {
+    if (!currentUser || !projectName) return;
+    const project = projects.find(p => p.name === projectName);
+    if (!project) return;
+    
+    const q = query(collection(db, "projects", project.id, "calculations"));
+    const snap = await getDocs(q);
+    for (const d of snap.docs) {
+      await deleteDoc(d.ref);
+    }
   };
-
   const availableTabs = ALL_TABS.filter(t => PLANS[plan].tabs.includes(t.id));
 
-  // Auto-switch tab if current one becomes unavailable after plan downgrade
-  useEffect(() => {
-    if (!availableTabs.find(t => t.id === activeTab)) {
-      setActiveTab(availableTabs[0]?.id || "volume");
+  const handleUpgrade = async (newPlan: "pro" | "expert") => {
+    if (!currentUser) return;
+    try {
+      await setDoc(doc(db, "users", currentUser.uid), { 
+        plan: newPlan,
+        updatedAt: serverTimestamp() 
+      }, { merge: true });
+      setActiveTab("volume"); // Redirect to home after payment
+      alert(`Félicitations ! Vous êtes maintenant au plan ${newPlan.toUpperCase()}.`);
+    } catch (e) {
+      console.error("Payment sync failed", e);
+      alert("Une erreur est survenue lors de l'activation de votre plan.");
     }
-  }, [plan, availableTabs, activeTab]);
+  };
+
+  if (loading) return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">Initialisation Terminal...</p>
+      </div>
+    </div>
+  );
+
+  if (!currentUser) return <AuthView onAuth={() => {}} />;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row overflow-hidden">
@@ -1160,21 +1655,29 @@ export default function App() {
             </div>
           </div>
 
-          {/* Plan Selector */}
-          <div className="p-1.5 bg-slate-100 rounded-xl flex gap-1">
-            {(Object.keys(PLANS) as Array<keyof typeof PLANS>).map((p) => (
-              <button
-                key={p}
-                onClick={() => setPlan(p)}
-                className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all ${
-                  plan === p 
-                  ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200" 
-                  : "text-slate-500 hover:text-slate-700 hover:bg-white/50"
-                }`}
-              >
-                {PLANS[p].label}
-              </button>
-            ))}
+          {/* User Profile Summary */}
+          <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100 mb-4">
+            <div className={`w-10 h-10 bg-white rounded-full border flex items-center justify-center ${isAdmin ? "border-red-500 text-red-500" : "border-slate-200 text-slate-400"}`}>
+              {isAdmin ? <Construction size={22} /> : <UserIcon size={20} />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-slate-900 truncate">
+                {isAdmin ? "Admin Root" : currentUser.email}
+              </p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <div className={`w-1.5 h-1.5 rounded-full ${isAdmin ? "bg-red-500 animate-pulse" : "bg-emerald-500"}`} />
+                <span className={`text-[9px] font-black uppercase tracking-wider ${isAdmin ? "text-red-600" : "text-slate-400"}`}>
+                  {isAdmin ? "Super Admin" : `Plan ${plan}`}
+                </span>
+              </div>
+            </div>
+            <button 
+              onClick={() => signOut(auth)}
+              className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+              title="Déconnexion"
+            >
+              <LogOut size={16} />
+            </button>
           </div>
         </div>
 
@@ -1216,6 +1719,19 @@ export default function App() {
                 </button>
               );
             })}
+            
+            {/* Payment / Upgrade Tab */}
+            <button
+              onClick={() => setActiveTab("pay")}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all mt-4 border-2 border-dashed ${
+                activeTab === "pay" 
+                ? "bg-emerald-50 border-emerald-500 text-emerald-700" 
+                : "border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-slate-50"
+              }`}
+            >
+              <CreditCard size={20} />
+              <span className="text-sm font-bold">Abonnement</span>
+            </button>
           </div>
         </nav>
 
@@ -1249,15 +1765,33 @@ export default function App() {
               </p>
             </div>
             
-            <div className="shrink-0">
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 pl-1">Identifiant Projet / Chantier</label>
-              <input 
-                type="text" 
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                placeholder="Ex: Villa Libreville..."
-                className="bg-white px-4 py-2 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-orange-500 transition-all shadow-sm outline-none w-full md:w-56"
-              />
+            <div className="shrink-0 min-w-[200px]">
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 pl-1">Projet / Chantier</label>
+              <div className="relative group">
+                <input 
+                  type="text" 
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  placeholder="Nom du projet..."
+                  className="bg-white px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-orange-500 transition-all shadow-sm outline-none w-full pr-10"
+                />
+                <Activity size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-orange-500 transition-colors" />
+                
+                {projects.length > 0 && !projects.find(p => p.name === projectName) && projectName && (
+                  <div className="absolute top-full left-0 w-full mt-1 bg-white border border-slate-100 rounded-xl shadow-xl z-50 py-1 overflow-hidden">
+                    <p className="px-3 py-1.5 text-[9px] font-bold text-slate-400 uppercase tracking-wider">Vos Projets Existants</p>
+                    {projects.map(p => (
+                      <button 
+                        key={p.id}
+                        onClick={() => setProjectName(p.name)}
+                        className="w-full text-left px-3 py-2 text-xs font-bold text-slate-600 hover:bg-orange-50 hover:text-orange-600 transition-colors"
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </header>
 
@@ -1294,6 +1828,7 @@ export default function App() {
                 {activeTab === "stock" && <StockModule />}
                 {activeTab === "jalons" && <JalonsTab />}
                 {activeTab === "historique" && <HistoriqueTab history={history} clearHistory={clearHistory} />}
+                {activeTab === "pay" && <PaymentView currentPlan={plan} onUpgrade={handleUpgrade} />}
 
                 {/* Add Global Save button for modules with results */}
                 {activeTab !== "historique" && (
